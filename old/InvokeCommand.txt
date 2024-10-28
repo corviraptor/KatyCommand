@@ -1,0 +1,78 @@
+package dev.corviraptor;
+
+import java.util.Collection;
+import java.util.Iterator;
+
+import com.mojang.brigadier.CommandDispatcher;
+import com.mojang.brigadier.arguments.StringArgumentType;
+import com.mojang.brigadier.builder.LiteralArgumentBuilder;
+import com.mojang.brigadier.context.CommandContext;
+import com.mojang.brigadier.exceptions.CommandSyntaxException;
+import com.mojang.brigadier.exceptions.SimpleCommandExceptionType;
+
+import net.minecraft.command.DataCommandObject;
+import net.minecraft.command.argument.NbtPathArgumentType;
+import net.minecraft.command.argument.NbtPathArgumentType.NbtPath;
+import net.minecraft.nbt.NbtElement;
+import net.minecraft.server.command.CommandManager;
+import net.minecraft.server.command.DataCommand;
+import net.minecraft.server.command.ServerCommandSource;
+import net.minecraft.text.Text;
+
+public class InvokeCommand {
+	public static void register(CommandDispatcher<ServerCommandSource> dispatcher) {
+		LiteralArgumentBuilder<ServerCommandSource> literalArgumentBuilder = CommandManager.literal("with");
+
+		for (DataCommand.ObjectType objectType : DataCommand.SOURCE_OBJECT_TYPES) {
+			objectType.addArgumentsToBuilder(
+					literalArgumentBuilder,
+					builder -> builder.executes(
+							context -> interpolate(
+									context,
+									objectType))
+							.then(
+									CommandManager.argument("path", NbtPathArgumentType.nbtPath())
+											.executes(
+													context -> interpolate(
+															context,
+															objectType
+															))));
+		}
+
+		dispatcher.register(
+				CommandManager.literal("invoke")
+						.requires(source -> source.hasPermissionLevel(2))
+						.then(CommandManager.argument("command", StringArgumentType.string())
+							.then(literalArgumentBuilder)));
+	}
+	
+	public static int interpolate(CommandContext<ServerCommandSource> context, DataCommand.ObjectType objectType) throws CommandSyntaxException {
+		final String command = StringArgumentType.getString(context, "command");
+		final NbtPath path = NbtPathArgumentType.getNbtPath(context, "path");
+
+		final DataCommandObject object = objectType.getObject(context);
+
+		final NbtElement value = getNbt(path, object);
+
+		final String interpolatedCommand = command.formatted(value);
+
+		final var source = context.getSource();
+
+		source.getServer().getCommandManager().getDispatcher().execute(interpolatedCommand, source);
+
+		return 0;
+
+	}
+
+	private static final SimpleCommandExceptionType GET_MULTIPLE_EXCEPTION = new SimpleCommandExceptionType(Text.translatable("commands.data.get.multiple"));
+	private static NbtElement getNbt(NbtPathArgumentType.NbtPath path, DataCommandObject object) throws CommandSyntaxException {
+		Collection<NbtElement> collection = path.get(object.getNbt());
+		Iterator<NbtElement> iterator = collection.iterator();
+		NbtElement nbtElement = (NbtElement)iterator.next();
+		if (iterator.hasNext()) {
+			throw GET_MULTIPLE_EXCEPTION.create();
+		} else {
+			return nbtElement;
+		}
+	}
+}
